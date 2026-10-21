@@ -95,7 +95,7 @@ async function loadEngine() {
   });
 
   const base =
-    "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd";
+    "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
 
   const coreURL = await toBlobURL(
     `${base}/ffmpeg-core.js`,
