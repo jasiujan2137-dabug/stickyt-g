@@ -1,0 +1,138 @@
+
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sticky TG — Vista Sticker Studio</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;padding:24px 12px;min-height:100vh;
+ font:14px "Segoe UI",Arial,sans-serif;color:#173a57;
+ background:radial-gradient(ellipse at top,#e7faff,#83b5dc 60%,#557da7);
+}
+.window{
+ max-width:760px;margin:auto;overflow:hidden;border-radius:12px;
+ border:1px solid #477ba5;background:#e9f5ff;
+ box-shadow:0 18px 50px #183d6070;
+}
+.title{
+ padding:17px 20px;color:white;
+ background:linear-gradient(#c9efff,#66b3e6 28%,#216cae 70%,#164d80);
+ text-shadow:0 1px 3px #173b5a;
+}
+.title h1{margin:0;font-size:26px;font-weight:600}
+.title p{margin:4px 0 0;color:#e4f7ff}
+.toolbar{padding:8px 16px;background:linear-gradient(white,#d4e9f9);border-bottom:1px solid #b4d0e5}
+main{padding:16px}
+.panel{
+ margin-bottom:15px;padding:16px;border:1px solid #a4c7e0;
+ border-radius:9px;background:linear-gradient(140deg,#fff,#e1f1fc);
+ box-shadow:inset 0 1px white,0 2px 5px #46759b18;
+}
+h2{font-size:16px;margin:0 0 12px;color:#195786}
+p{line-height:1.55}
+.muted{font-size:12px;color:#55748d}
+.drop{
+ padding:24px;text-align:center;border:2px dashed #82b5d8;
+ border-radius:8px;background:linear-gradient(white,#dceffc);cursor:pointer;
+}
+.drop:hover{border-color:#2787c6}
+.drop input{display:none}
+button,.download{
+ display:inline-block;padding:10px 16px;border:1px solid #6499bf;
+ border-radius:5px;background:linear-gradient(white,#d5ecfc 48%,#a9d5f2 49%,#e2f5ff);
+ color:#173f60;font:600 13px "Segoe UI",Arial;cursor:pointer;text-decoration:none;
+ box-shadow:inset 0 1px white,0 1px 2px #345a7733;
+}
+button:hover,.download:hover{background:linear-gradient(white,#c5e8fc)}
+button:disabled{opacity:.5;cursor:not-allowed}
+label{display:block;margin:10px 0 7px;font-weight:600}
+input[type=range]{width:100%;accent-color:#278aca}
+input[type=color]{width:100%;height:34px}
+input[type=checkbox]{accent-color:#278aca}
+.value{float:right;color:#216fa8}
+.preview{
+ min-height:200px;display:grid;place-items:center;overflow:hidden;
+ border:1px solid #a8c7df;border-radius:7px;
+ background-color:#fff;
+ background-image:linear-gradient(45deg,#d9e4ec 25%,transparent 25%),
+ linear-gradient(-45deg,#d9e4ec 25%,transparent 25%),
+ linear-gradient(45deg,transparent 75%,#d9e4ec 75%),
+ linear-gradient(-45deg,transparent 75%,#d9e4ec 75%);
+ background-size:18px 18px;background-position:0 0,0 9px,9px -9px,-9px 0;
+}
+.preview video{max-width:100%;max-height:320px}
+.actions{display:flex;gap:10px;margin-top:13px;flex-wrap:wrap}
+.actions>*{flex:1}
+progress{width:100%;height:14px;accent-color:#278aca}
+#status{white-space:pre-wrap;overflow-wrap:anywhere}
+.error{color:#b52222}.success{color:#087344}
+footer{text-align:center;padding:12px;font-size:11px;color:#456a86}
+@media(max-width:480px){main{padding:9px}.panel{padding:12px}}
+</style>
+</head>
+<body>
+<div class="window">
+<header class="title">
+<h1>✦ Sticky TG</h1>
+<p>Vista Sticker Studio · Animated WEBM Converter</p>
+</header>
+<div class="toolbar">Plik &nbsp;›&nbsp; Ramka &nbsp;›&nbsp; Konwersja</div>
+<main>
+<section class="panel">
+<h2>① Wybierz film</h2>
+<label class="drop">
+<input type="file" id="file" accept=".mov,video/quicktime,video/*">
+<span style="font-size:28px">🎞️</span><br>
+<strong>Kliknij i wybierz plik MOV</strong>
+<p class="muted">ProRes 4444 · przezroczyste tło · maks. 3 sekundy</p>
+</label>
+<p id="fileInfo" class="muted">Nie wybrano pliku.</p>
+<div class="preview">
+<video id="source" controls muted loop playsinline hidden></video>
+<span id="placeholder" class="muted">Podgląd źródła pojawi się tutaj</span>
+</div>
+</section>
+
+<section class="panel">
+<h2>② Ramka i cień</h2>
+<label><input id="frame" type="checkbox" checked> Włącz białą ramkę</label>
+<label for="color">Kolor ramki</label>
+<input id="color" type="color" value="#ffffff">
+<label for="thickness">Grubość <span id="tv" class="value">4 px</span></label>
+<input id="thickness" type="range" min="1" max="8" value="4">
+<label for="shadow">Cień <span id="sv" class="value">35%</span></label>
+<input id="shadow" type="range" min="0" max="100" value="35">
+</section>
+
+<section class="panel">
+<h2>③ Konwersja</h2>
+<p class="muted">512 × 512 px · 30 FPS · VP9 · do 3 s · limit 256 KiB</p>
+<label for="quality">Jakość <span id="qv" class="value">30</span></label>
+<input id="quality" type="range" min="20" max="50" value="30">
+<progress id="progress" max="100" value="0"></progress>
+<p id="progressText" class="muted">Gotowy do pracy.</p>
+<p id="status" role="status" aria-live="polite"></p>
+<div class="actions">
+<button id="convert" disabled>✦ Konwertuj</button>
+<button id="cancel" disabled>Anuluj</button>
+</div>
+<div id="result" hidden>
+<h2>Gotowa naklejka</h2>
+<div class="preview"><video id="outputPreview" controls muted loop playsinline></video></div>
+<p id="resultInfo" class="muted"></p>
+<a id="download" class="download" download="naklejka.webm">Pobierz WEBM</a>
+</div>
+</section>
+<section class="panel">
+<h2>Informacje</h2>
+<p class="muted">Silnik konwersji będzie uruchamiany z naszej strony. Pierwsze uruchomienie wymaga internetu. Jeśli plik przekracza limit rozmiaru, konwerter poinformuje o tym.</p>
+</section>
+</main>
+<footer>Sticky TG · Vista Aero Edition</footer>
+</div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
