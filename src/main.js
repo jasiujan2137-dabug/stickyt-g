@@ -1,15 +1,15 @@
 
-
 import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { fetchFile, toBlobURL } from "@ffmpeg/util";
+import { fetchFile } from "@ffmpeg/util";
 
 const $ = (id) => document.getElementById(id);
+
 const LIMIT = 256 * 1024;
-const MAX_SECONDS = 3;
 const FPS = 30;
 const SIZE = 512;
+const MAX_SECONDS = 3;
 
-let ffmpeg;
+let ffmpeg = null;
 let loaded = false;
 let busy = false;
 let cancelled = false;
@@ -17,12 +17,12 @@ let sourceFile = null;
 let sourceURL = null;
 let outputURL = null;
 
-function status(message, type = "") {
+function setStatus(message, type = "") {
   $("status").textContent = message;
   $("status").className = type;
 }
 
-function progress(value, message) {
+function setProgress(value, message) {
   $("progress").value = value;
   $("progressText").textContent = message;
 }
@@ -51,7 +51,12 @@ $("quality").addEventListener("input", () => {
 
 $("file").addEventListener("change", (event) => {
   const file = event.target.files?.[0];
-  if (!file || busy) return;
+  if (!file) return;
+
+  if (busy) {
+    setStatus("Najpierw anuluj bieżącą konwersję.", "error");
+    return;
+  }
 
   sourceFile = file;
   clearOutput();
@@ -66,15 +71,16 @@ $("file").addEventListener("change", (event) => {
     `${file.name} • ${formatSize(file.size)}`;
 
   $("convert").disabled = false;
-  status("");
-  progress(0, "Plik wybrany. Gotowy do konwersji.");
+  setStatus("");
+  setProgress(0, "Plik wybrany. Gotowy do konwersji.");
+  $("source").load();
 });
 
 async function loadEngine() {
   if (loaded) return;
 
-  progress(2, "Uruchamianie silnika FFmpeg…");
-  status("Pierwsze uruchomienie wymaga pobrania silnika.");
+  setProgress(2, "Uruchamianie FFmpeg…");
+  setStatus("Ładowanie silnika konwersji. Poczekaj.");
 
   ffmpeg = new FFmpeg();
 
@@ -82,53 +88,54 @@ async function loadEngine() {
     console.log("[FFmpeg]", message);
   });
 
-  ffmpeg.on("progress", ({ progress: value }) => {
-    if (busy && Number.isFinite(value)) {
-      progress(
-        Math.max(10, Math.min(85, Math.round(value * 75))),
+  ffmpeg.on("progress", ({ progress }) => {
+    if (busy && Number.isFinite(progress)) {
+      setProgress(
+        Math.max(5, Math.min(90, Math.round(progress * 80))),
         "Przetwarzanie filmu…"
       );
     }
   });
 
-  const base =
-    "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+  /*
+   * Silnik jest kopiowany do public/ffmpeg przez
+   * konfigurację budowania projektu.
+   */
+  const base = `${import.meta.env.BASE_URL}ffmpeg`;
 
-  const coreURL = await toBlobURL(
-    `${base}/ffmpeg-core.js`,
-    "text/javascript"
-  );
+  await ffmpeg.load({
+    coreURL: `${base}/ffmpeg-core.js`,
+    wasmURL: `${base}/ffmpeg-core.wasm`
+  });
 
-  const wasmURL = await toBlobURL(
-    `${base}/ffmpeg-core.wasm`,
-    "application/wasm"
-  );
-
-  await ffmpeg.load({ coreURL, wasmURL });
   loaded = true;
+  setProgress(5, "Silnik FFmpeg gotowy.");
+  setStatus("");
 }
 
 async function removeFile(name) {
   try {
     await ffmpeg.deleteFile(name);
-  } catch {}
+  } catch {
+    // Plik może jeszcze nie istnieć.
+  }
 }
 
-async function exec(args) {
+async function runFFmpeg(args) {
   if (cancelled) throw new Error("Konwersja anulowana.");
 
   const code = await ffmpeg.exec(args);
 
   if (code !== 0) {
     throw new Error(
-      "FFmpeg zgłosił błąd. Sprawdź konsolę przeglądarki."
+      "FFmpeg nie ukończył operacji. Sprawdź logi przeglądarki."
     );
   }
 
   if (cancelled) throw new Error("Konwersja anulowana.");
 }
 
-async function readDuration() {
+async function getDuration() {
   let logs = "";
 
   const handler = ({ message }) => {
@@ -140,7 +147,7 @@ async function readDuration() {
   try {
     await ffmpeg.exec(["-i", "input.mov"]);
   } catch {
-    // Odczyt informacji o pliku może zwrócić kod błędu.
+    // Polecenie -i bez pliku wyjściowego może zakończyć się błędem.
   } finally {
     ffmpeg.off("log", handler);
   }
@@ -151,7 +158,7 @@ async function readDuration() {
 
   if (!match) {
     throw new Error(
-      "Nie można odczytać filmu. Spróbuj innego pliku MOV."
+      "Nie udało się odczytać filmu. Spróbuj innego pliku MOV."
     );
   }
 
@@ -163,10 +170,10 @@ async function readDuration() {
 }
 
 async function makeFrames() {
-  await exec([
+  await runFFmpeg([
     "-i", "input.mov",
-    "-t", String(MAX_SECONDS),
     "-an",
+    "-t", String(MAX_SECONDS),
     "-vf",
     `fps=${FPS},scale=${SIZE}:${SIZE}:force_original_aspect_ratio=decrease,pad=${SIZE}:${SIZE}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba`,
     "-frames:v", String(FPS * MAX_SECONDS),
@@ -188,7 +195,7 @@ async function makeFrames() {
   }
 
   if (!frames.length) {
-    throw new Error("Nie udało się odczytać klatek filmu.");
+    throw new Error("Nie udało się wyodrębnić klatek z filmu.");
   }
 
   return frames;
@@ -198,22 +205,34 @@ async function addFrame(frames) {
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = SIZE;
 
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", {
+    willReadFrequently: true
+  });
+
   const mask = document.createElement("canvas");
   mask.width = mask.height = SIZE;
 
-  const mctx = mask.getContext("2d");
+  const mctx = mask.getContext("2d", {
+    willReadFrequently: true
+  });
 
   const enabled = $("frame").checked;
   const thickness = Number($("thickness").value);
   const color = $("color").value;
   const shadow = Number($("shadow").value) / 100;
 
+  const rgb = [
+    parseInt(color.slice(1, 3), 16),
+    parseInt(color.slice(3, 5), 16),
+    parseInt(color.slice(5, 7), 16)
+  ];
+
   for (let index = 0; index < frames.length; index++) {
     if (cancelled) throw new Error("Konwersja anulowana.");
 
     const name = frames[index];
     const data = await ffmpeg.readFile(name);
+
     const bitmap = await createImageBitmap(
       new Blob([data], { type: "image/png" })
     );
@@ -229,6 +248,7 @@ async function addFrame(frames) {
       for (let radius = 1; radius <= thickness; radius++) {
         for (let i = 0; i < steps; i++) {
           const angle = (i / steps) * Math.PI * 2;
+
           mctx.drawImage(
             bitmap,
             Math.cos(angle) * radius,
@@ -241,9 +261,9 @@ async function addFrame(frames) {
 
       for (let p = 0; p < image.data.length; p += 4) {
         if (image.data[p + 3] > 0) {
-          image.data[p] = parseInt(color.slice(1, 3), 16);
-          image.data[p + 1] = parseInt(color.slice(3, 5), 16);
-          image.data[p + 2] = parseInt(color.slice(5, 7), 16);
+          image.data[p] = rgb[0];
+          image.data[p + 1] = rgb[1];
+          image.data[p + 2] = rgb[2];
           image.data[p + 3] = 255;
         }
       }
@@ -277,7 +297,7 @@ async function addFrame(frames) {
       new Uint8Array(await png.arrayBuffer())
     );
 
-    progress(
+    setProgress(
       10 + Math.round(((index + 1) / frames.length) * 45),
       `Przygotowywanie klatek: ${index + 1}/${frames.length}`
     );
@@ -297,13 +317,11 @@ async function convert() {
     await loadEngine();
 
     await removeFile("input.mov");
-    await ffmpeg.writeFile(
-      "input.mov",
-      await fetchFile(sourceFile)
-    );
+    await ffmpeg.writeFile("input.mov", await fetchFile(sourceFile));
 
-    progress(8, "Sprawdzanie długości filmu…");
-    const duration = await readDuration();
+    setProgress(8, "Sprawdzanie długości filmu…");
+
+    const duration = await getDuration();
 
     if (duration > MAX_SECONDS + 0.001) {
       throw new Error(
@@ -311,36 +329,36 @@ async function convert() {
       );
     }
 
-    progress(10, "Wyodrębnianie klatek…");
-    const frames = await makeFrames();
+    setProgress(10, "Wyodrębnianie klatek…");
 
+    const frames = await makeFrames();
     await addFrame(frames);
 
-    const start = Number($("quality").value);
+    const startCRF = Number($("quality").value);
     const attempts = [...new Set([
-      start,
-      Math.max(start, 35),
-      Math.max(start, 40),
-      Math.max(start, 45),
+      startCRF,
+      Math.max(startCRF, 35),
+      Math.max(startCRF, 40),
+      Math.max(startCRF, 45),
       50
     ])];
 
     let output = null;
-    let usedQuality = start;
+    let usedCRF = startCRF;
 
     for (let i = 0; i < attempts.length; i++) {
       if (cancelled) throw new Error("Konwersja anulowana.");
 
-      usedQuality = attempts[i];
+      usedCRF = attempts[i];
 
-      progress(
+      setProgress(
         55 + Math.round((i / attempts.length) * 40),
-        `Kompresja WEBM: próba ${i + 1}/${attempts.length}`
+        `Kompresja WEBM — CRF ${usedCRF}…`
       );
 
       await removeFile("output.webm");
 
-      await exec([
+      await runFFmpeg([
         "-framerate", String(FPS),
         "-start_number", "1",
         "-i", "frame%04d.png",
@@ -350,7 +368,7 @@ async function convert() {
         "-auto-alt-ref", "0",
         "-deadline", "good",
         "-cpu-used", "4",
-        "-crf", String(usedQuality),
+        "-crf", String(usedCRF),
         "-b:v", "0",
         "-t", String(MAX_SECONDS),
         "-metadata:s:v:0", "alpha_mode=1",
@@ -380,20 +398,20 @@ async function convert() {
     $("download").href = outputURL;
 
     $("resultInfo").textContent =
-      `${formatSize(output.length)} • ${frames.length} klatek • VP9 • CRF ${usedQuality}`;
+      `${formatSize(output.length)} • ${frames.length} klatek • VP9 • CRF ${usedCRF}`;
 
     $("result").hidden = false;
-    progress(100, "Konwersja zakończona.");
-    status("Gotowe! Możesz obejrzeć i pobrać naklejkę.", "success");
+    setProgress(100, "Konwersja zakończona.");
+    setStatus("Gotowe! Sprawdź podgląd i pobierz plik.", "success");
   } catch (error) {
     console.error(error);
-    progress(0, "Konwersja nie została zakończona.");
-    status(error?.message || String(error), "error");
+    setProgress(0, "Konwersja nie została zakończona.");
+    setStatus(error?.message || String(error), "error");
   } finally {
     busy = false;
-    cancelled = false;
     $("convert").disabled = !sourceFile;
     $("cancel").disabled = true;
+    cancelled = false;
   }
 }
 
@@ -401,5 +419,5 @@ $("convert").addEventListener("click", convert);
 
 $("cancel").addEventListener("click", () => {
   cancelled = true;
-  status("Anulowanie operacji…");
+  setStatus("Anulowanie operacji…");
 });
